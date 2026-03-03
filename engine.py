@@ -6,6 +6,7 @@ from typing import Iterable
 import torch
 
 import functools
+# print를 항상 즉시 flush 하도록 바꿔서(버퍼링 방지) 학습 로그가 실시간으로 보이게 함
 print = functools.partial(print, flush=True)
 import util.misc as utils
 
@@ -26,6 +27,7 @@ def train_one_epoch(opts, GEN: torch.nn.Module, DIS: torch.nn.Module, criterion:
     GEN.train()
     DIS.train()
     criterion.train()
+                        
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
 
@@ -37,28 +39,38 @@ def train_one_epoch(opts, GEN: torch.nn.Module, DIS: torch.nn.Module, criterion:
         for k,v in samples.items():
             if isinstance(samples[k], torch.Tensor):
                 samples[k]=v.to(device)
+        # -----------------------------------------
+        # (A) 일반 FP32 경로 (AMP 미사용)
+        # -----------------------------------------                
         if g_grad_scale is None:
-            gt=samples['ground_truth']
-            fake = GEN(samples)
+            gt = samples['ground_truth']      # 정답 이미지(타겟)
+            fake = GEN(samples)               # generator 출력(가짜/복원 결과)
+
+            # 주기적으로 gt와 fake를 나란히 저장(학습 진행 모니터링)
             if i%display_freq==0:
                 fig_name = f"{epoch}_{time.time():04f}"
                 fig = np.concatenate([denorm_img(gt, opts), denorm_img(fake, opts)], axis=1)
                 plt.imsave(os.path.join(opts.visdir, fig_name + '.png'), fig, vmin=0, vmax=1)
 
+            # ---- Discriminator 업데이트 ----
             D_loss_dict = criterion.get_dis_loss(fake, gt, DIS)
             D_losses = sum(D_loss_dict[k] * criterion.dis_weight_dict[k] for k in D_loss_dict.keys())
 
             dis_opt.zero_grad()
-            D_losses.backward()
+            D_losses.backward()  # D에 대한 역전파
             dis_opt.step()
 
+            # ---- Generator 업데이트 ----
             G_loss_dict = criterion.get_gen_loss(fake, gt, DIS)
             G_losses = sum(G_loss_dict[k] * criterion.gen_weight_dict[k] for k in G_loss_dict.keys())
 
             gen_opt.zero_grad()
-            G_losses.backward()
+            G_losses.backward()  # G에 대한 역전파
             gen_opt.step()
-
+            
+        # -----------------------------------------
+        # (B) AMP(혼합정밀도) 경로
+        # -----------------------------------------
         else:
             with torch.cuda.amp.autocast():
                 gt = samples['ground_truth']
@@ -85,11 +97,15 @@ def train_one_epoch(opts, GEN: torch.nn.Module, DIS: torch.nn.Module, criterion:
             g_grad_scale.step(gen_opt)
             g_grad_scale.update()
 
+        # G/D 각 loss 항목을 metric_logger에 기록
         metric_logger.update(**G_loss_dict,**D_loss_dict)
+        # dis_opt의 lr을 로깅
         metric_logger.update(lr=dis_opt.param_groups[0]["lr"])
 
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
+    
+    # epoch 전체 평균 값 반환
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
@@ -100,6 +116,7 @@ def train_one_epoch_warmup(opts, GEN: torch.nn.Module,criterion: torch.nn.Module
 
     GEN.train()
     criterion.train()
+                        
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
 
@@ -112,30 +129,42 @@ def train_one_epoch_warmup(opts, GEN: torch.nn.Module,criterion: torch.nn.Module
             if isinstance(samples[k], torch.Tensor):
                 samples[k] = v.to(device)
 
+        # -------------------------
+        # (A) FP32 warmup
+        # -------------------------        
         if g_grad_scale is None:
             gt = samples['ground_truth']
             outputs = GEN(samples)
+            
             if i%display_freq==0:
                 fig_name = f"{epoch}_{time.time():04f}"
                 fig = np.concatenate([denorm_img(gt, opts), denorm_img(outputs, opts)], axis=1)
                 plt.imsave(os.path.join(opts.visdir, fig_name + '.png'), fig, vmin=0, vmax=1)
+                
             G_loss_dict = criterion.get_gen_loss(outputs, gt,  warmup=True)
             G_losses = sum(G_loss_dict[k] * criterion.gen_weight_dict[k] for k in G_loss_dict.keys())
 
             gen_opt.zero_grad()
             G_losses.backward()
             gen_opt.step()
+
+        # -------------------------
+        # (B) AMP warmup
+        # -------------------------        
         else:
             gen_opt.zero_grad()
             with torch.cuda.amp.autocast():
                 gt = samples['ground_truth']
                 outputs = GEN(samples)
+                
                 if i % display_freq == 0:
                     fig_name = f"{epoch}_{time.time():04f}"
                     fig = np.concatenate([denorm_img(gt, opts), denorm_img(outputs, opts)], axis=1)
                     plt.imsave(os.path.join(opts.visdir, fig_name + '.png'), fig, vmin=0, vmax=1)
+                    
                 G_loss_dict = criterion.get_gen_loss(outputs, gt, warmup=True)
                 G_losses = sum(G_loss_dict[k] * criterion.gen_weight_dict[k] for k in G_loss_dict.keys())
+                
             g_grad_scale.scale(G_losses).backward()
             g_grad_scale.step(gen_opt)
             g_grad_scale.update()
@@ -145,4 +174,5 @@ def train_one_epoch_warmup(opts, GEN: torch.nn.Module,criterion: torch.nn.Module
 
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
+
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}

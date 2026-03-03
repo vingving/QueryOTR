@@ -68,7 +68,7 @@ def rand_saturation(x):
     """    
     # 채널 평균 (RGB 평균)
     x_mean = x.mean(dim=1, keepdim=True)
-    # 평균을 중심으로 스케일링
+    # x = (x - x_mean) * scale + x_mean
     x = (x - x_mean) * (torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device) * 2) + x_mean
     return x
 
@@ -77,7 +77,7 @@ def rand_contrast(x):
     """
     명암 대비 조절
 
-    1) 이미지 전체 평균 계산
+    1) 이미지 1장당 평균 밝기 계산
        x_mean shape: (B,1,1,1)
 
     2) 평균을 기준으로 스케일링
@@ -85,6 +85,7 @@ def rand_contrast(x):
     스케일 범위: [0.5, 1.5)
     """    
     x_mean = x.mean(dim=[1, 2, 3], keepdim=True)
+    # x = (x - x_mean) * s + x_mean
     x = (x - x_mean) * (torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device) + 0.5) + x_mean
     return x
 
@@ -104,12 +105,12 @@ def rand_translation(x, ratio=0.125):
         2) 각 이미지마다 랜덤 이동값 생성
         3) padding 후 indexing으로 위치 이동
     """    
-    # 이동 가능한 최대 픽셀 계산
+    # 이동 가능한 최대 픽셀 계산 [-shift_x, +shift_x], [-shift_y, +shift_y]
     shift_x, shift_y = int(x.size(2) * ratio + 0.5), int(x.size(3) * ratio + 0.5)
-    # 각 배치별 랜덤 이동값
+    # 각 배치별 랜덤 이동값: (B,1,1) (각 이미지마다 서로 다른 이동값을 가짐)
     translation_x = torch.randint(-shift_x, shift_x + 1, size=[x.size(0), 1, 1], device=x.device)
     translation_y = torch.randint(-shift_y, shift_y + 1, size=[x.size(0), 1, 1], device=x.device)
-    # indexing을 위한 grid 생성
+    # indexing을 위한 grid 생성: (B,H,W)
     grid_batch, grid_x, grid_y = torch.meshgrid(
         torch.arange(x.size(0), dtype=torch.long, device=x.device),
         torch.arange(x.size(2), dtype=torch.long, device=x.device),
@@ -120,7 +121,7 @@ def rand_translation(x, ratio=0.125):
     grid_y = torch.clamp(grid_y + translation_y + 1, 0, x.size(3) + 1)
     # 가장자리 처리를 위해 padding
     x_pad = F.pad(x, [1, 1, 1, 1, 0, 0, 0, 0])
-    # indexing으로 실제 이동 수행
+    # indexing으로 실제 이동 수행 (B, C, H+2, W+2) → (B, H+2, W+2, C)
     x = x_pad.permute(0, 2, 3, 1).contiguous()[grid_batch, grid_x, grid_y].permute(0, 3, 1, 2).contiguous()
     return x
 
@@ -163,3 +164,4 @@ AUGMENT_FNS = {
     'cutout': [rand_cutout],
 
 }
+

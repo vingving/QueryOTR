@@ -16,7 +16,9 @@ parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument("-r", "--resume", type=str)
 parser.add_argument('--input_size', type=int, default=128)
 parser.add_argument('--output_size', type=int, default=192)
+# decoder depth (Transformer decoder 레이어 수 등)
 parser.add_argument('--dec_depth', type=int, default=4)
+# 타겟 패치 픽셀을 정규화해서 학습/추론하는지 여부
 parser.add_argument('--normlize_target', default=True, type=bool, help='normalized the target patch pixels')
 parser.add_argument('--patch_mean', type=float, default=0.5044838)
 parser.add_argument('--patch_std', type=float, default=0.1355051)
@@ -26,33 +28,49 @@ opts = parser.parse_args()
 
 
 
-def denorm_img(tensor):
+def denorm_img(tensor: torch.Tensor): -> np.ndarray:
+    """
+    Args:
+        tensor: (B, C, W, H)
+    Returns:
+        (W, H, C) [0, 1]
+    """
     _mean = torch.tensor([opts.patch_mean, opts.patch_mean, opts.patch_mean]).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
     _std = torch.tensor([opts.patch_std, opts.patch_std, opts.patch_std]).unsqueeze(-1).unsqueeze(-1).unsqueeze(0)
+    # 역정규화: x * std + mean
     tensor = tensor * _std.cuda().expand_as(tensor) + _mean.cuda().expand_as(tensor)
+    # 배치에서 첫 장만 뽑음
     tensor = rearrange(tensor[0:1], 'b c w h -> b w h c').detach().cpu()
     tensor = np.clip(tensor[0].numpy(), 0, 1)
     return tensor
 
 if __name__=='__main__':
     gen = TransGen(opts=opts).cuda()
+    
     logdir = opts.resume
     ckptdir = os.path.join(logdir, "checkpoints")
+    
     if opts.epoch is not None:
         ckpt_name = os.path.join(ckptdir, f'{opts.epoch}.pth')
     else:
         ckpt_name = os.path.join(ckptdir, 'latest.pth')
+        
     assert os.path.isfile(ckpt_name), f'check if existing checkpoint files {ckpt_name}'
+    
     gtdir = os.path.join(logdir, "gt")
     generatedir = os.path.join(logdir, "generated")
     for d in [gtdir, generatedir]:
         os.makedirs(d, exist_ok=True)
+        
     test_dataset = ImageDataset(opts)
     test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=64, shuffle=False, drop_last=False)
+    
     state_path = os.path.join(ckpt_name)
     state_dict = torch.load(state_path)
+    
     gen.load_state_dict(state_dict['gen'])
     gen.eval()
+    
     with torch.no_grad():
         for batch_idx, test_data in enumerate(test_loader):
             for k in test_data.keys():
@@ -70,11 +88,17 @@ if __name__=='__main__':
     os.system(f'python -m pytorch_fid {gtdir} {generatedir}')
     imgs = []
     for f in os.listdir(generatedir):
-        im = np.array(Image.open(os.path.join(generatedir, f))).transpose(2, 0, 1).astype(np.float32)[:3]
+        # PIL로 이미지 로드 -> numpy(H,W,C)
+        im = np.array(Image.open(os.path.join(generatedir, f)))
+        # (H,W,C) -> (C,H,W) 로 변경 (torch 모델 입력 관례)
+        # [:3]는 혹시 알파 채널이 있을 경우 RGB만 쓰려는 의도
+        im = im.transpose(2, 0, 1).astype(np.float32)[:3]
         im /= 255
         im = im * 2 - 1
         imgs.append(im)
+    # 리스트를 (N,3,H,W) numpy로 stack
     imgs = np.stack(imgs, 0)
     imgs = torch.from_numpy(imgs).cuda()
     iscore = inception_score(imgs, cuda=True, batch_size=32, resize=True, splits=1)[0]
     print('IS score', iscore)
+

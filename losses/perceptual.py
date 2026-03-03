@@ -28,11 +28,13 @@ class VGG19(torch.nn.Module):
                 param.requires_grad = False
 
     def forward(self, X):
-        h_relu1 = self.slice1(X)
+        h_relu1 = self.slice1(X)       # low-level feature (edge, texture)
         h_relu2 = self.slice2(h_relu1)
         h_relu3 = self.slice3(h_relu2)
         h_relu4 = self.slice4(h_relu3)
-        h_relu5 = self.slice5(h_relu4)
+        h_relu5 = self.slice5(h_relu4) # high-level feature (object-level)
+
+        # 각 해상도에서의 feature map을 리스트로 반환
         out = [h_relu1, h_relu2, h_relu3, h_relu4, h_relu5]
         return out
 
@@ -45,14 +47,22 @@ class PerceptualLoss(nn.Module):
         super(PerceptualLoss, self).__init__()
 
         self.vgg = VGG19().cuda()
+        # feature map 간 차이를 계산할 손실 함수
         self.criterion = nn.L1Loss()
+        # 각 stage별 가중치: deeper layer일수록 가중치가 커짐
+        # → 고수준 semantic feature에 더 많은 비중        
         self.weights = [1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0]
 
     def forward(self, x, y):
+        # x: 생성 이미지 (fake)
+        # y: 정답 이미지 (real)
+        
         x_vgg, y_vgg = self.vgg(x), self.vgg(y)
         loss = 0
+
+        # 각 stage별 feature 차이를 계산
         for i in range(len(x_vgg)):
-            loss += self.weights[i] * self.criterion(x_vgg[i], y_vgg[i].detach())
+            loss += self.weights[i] * self.criterion(x_vgg[i], y_vgg[i].detach())  # 정답쪽은 gradient 차단
         return loss
 
     #     self.vgg_model= vgg16(pretrained=True)
@@ -66,5 +76,6 @@ class PerceptualLoss(nn.Module):
     #
     # def forward(self, input_fake, input_real):
     #     return torch.mean((self.instance_norm(self.vgg_model.features(input_fake)) - self.instance_norm(self.vgg_model.features(input_real))) ** 2)
+
 
 

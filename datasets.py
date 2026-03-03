@@ -18,6 +18,16 @@ def is_image_file(filename):
     return any(filename.endswith(extension) for extension in IMG_EXTENSIONS)
 
 def make_dataset(dir, max_dataset_size=float("inf")):
+    """
+    주어진 디렉토리에서 이미지 파일 경로를 모두 수집
+
+    Args:
+        dir (str): 데이터 루트 경로
+        max_dataset_size (int): 최대 데이터 개수 제한
+
+    Returns:
+        list: 이미지 파일 경로 리스트
+    """    
     images = []
     assert os.path.isdir(dir), '%s is not a valid directory' % dir
     for root, _, fnames in sorted(os.walk(dir)):
@@ -34,6 +44,9 @@ class ImageDataset(data.Dataset):
         self.is_train=not opts.eval
         input_size=opts.input_size
         output_size=opts.output_size
+        # 중앙 crop 영역 계산
+        # output_size 안에서 input_size만큼 중앙 영역을 사용할 것이므로
+        # 양쪽 가장자리 패딩 크기 계산        
         per_edge_pad=(output_size-input_size)//2
         normlize_target=opts.normlize_target
         patch_mean=opts.patch_mean
@@ -66,6 +79,15 @@ class ImageDataset(data.Dataset):
         self.per_edge_pad=per_edge_pad
 
     def __getitem__(self, index):
+        """
+        Returns:
+            dict {
+                'input': 
+                'ground_truth':
+                'gt_inner':
+                'name': 
+            }
+        """
         name= os.path.splitext(os.path.split(self.img_paths[index])[-1])[0]
         im=Image.open(self.img_paths[index]).convert('RGB')
         im=self.transform(im)
@@ -77,3 +99,4 @@ class ImageDataset(data.Dataset):
 
     def __len__(self):
         return len(self.img_paths)
+

@@ -135,11 +135,12 @@ class TransGen(nn.Module):
         # -------------------------
         # PSM으로 이미지 복원
         # - tgt: outer에 대한 예측 토큰 포함
-        # - gt_inner: inner에 해당하는 GT/기반 정보(192x192)로 보임
+        # - gt_inner: inner에 해당하는 GT/기반 정보(192x192)
         # fake: 최종 출력 이미지
         # -------------------------        
         fake=self.psm(tgt,gt_inner)
         return fake
+
 
 
 

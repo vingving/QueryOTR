@@ -88,15 +88,35 @@ class ImageDataset(data.Dataset):
                 'name': 
             }
         """
+        # 파일 이름 (확장자 제거)
         name= os.path.splitext(os.path.split(self.img_paths[index])[-1])[0]
-        im=Image.open(self.img_paths[index]).convert('RGB')
-        im=self.transform(im)
-        input_img=self.input_image_normalize(deepcopy(im))[:,self.per_edge_pad:-self.per_edge_pad,self.per_edge_pad:-self.per_edge_pad]
 
+        # 이미지 로드 (RGB 변환)
+        im=Image.open(self.img_paths[index]).convert('RGB')
+        
+        # transform 적용
+        im=self.transform(im)
+        
+        # =========================
+        # 입력 이미지 생성
+        # =========================
+        # ImageNet 정규화 후, 중앙 영역만 crop
+        input_img = self.input_image_normalize(
+            deepcopy(im)
+        )[:, self.per_edge_pad:-self.per_edge_pad,
+           self.per_edge_pad:-self.per_edge_pad]
+        
+        # =========================
+        # Ground Truth 생성
+        # =========================        
         gt=self.output_patch_normalize(deepcopy(im))
+        
+        # 중앙 영역만 남긴 gt
         gt_inner=deepcopy(gt)*self.mask
+        
         return {'input':input_img,'ground_truth':gt,'gt_inner':gt_inner,'name':name}
 
     def __len__(self):
         return len(self.img_paths)
+
 
